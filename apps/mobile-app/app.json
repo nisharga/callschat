@@ -4,10 +4,10 @@
     "slug": "callschat",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./app/src/assets/icon.png",
     "userInterfaceStyle": "automatic",
     "splash": {
-      "image": "./assets/splash.png",
+      "image": "./app/src/assets/splash-icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
@@ -20,16 +20,25 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./app/src/assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
       "package": "com.callschat.app"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./app/src/assets/favicon.png"
     },
     "plugins": [
-      "expo-router"
-    ]
+      "expo-router",
+      "expo-font"
+    ],
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "62fe4d4c-5a41-4a9c-a15e-8fed4aa7e450"
+      }
+    }
   }
 }
