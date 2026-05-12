@@ -1,0 +1,729 @@
+// CallsChat Database Schema
+// Privacy-focused communication platform
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============== User Management ==============
+
+model User {
+  id              String   @id @default(uuid())
+  phoneHash       String   @unique
+  phoneEncrypted  String
+  callschatId     String   @unique
+  username        String?  @unique
+  displayName     String?
+  avatar          String?
+  bio             String?
+  country         String?
+  status          UserStatus @default(ACTIVE)
+  isOnline        Boolean  @default(false)
+  lastSeenAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Privacy
+  privacySettings UserPrivacySettings?
+  blockedUsers    Block[]      @relation("UserBlockedUsers")
+  blockedBy       Block[]      @relation("UserBlockedBy")
+
+  // Devices
+  devices         Device[]
+
+  // Chats & Messages
+  sentMessages    Message[]    @relation("UserMessages")
+  conversations   ConversationMember[]
+
+  // Calls
+  initiatedCalls  Call[]       @relation("InitiatedCalls")
+  receivedCalls   Call[]       @relation("ReceivedCalls")
+  callParticipants CallParticipant[]
+
+  // Contacts
+  sentContactRequests    ContactRequest[] @relation("SentContactRequests")
+  receivedContactRequests ContactRequest[] @relation("ReceivedContactRequests")
+  contacts               Contact[]        @relation("UserContacts")
+
+  // Communities
+  ownedCommunities Community[]        @relation("CommunityOwner")
+  communityMembers CommunityMember[]
+
+  // Reports
+  reports     Report[]  @relation("UserReports")
+  reportedIn  Report[]  @relation("ReportedUser")
+
+  // Moderation
+  moderationActions ModerationAction[]
+
+  // Wallet
+  wallet     Wallet?
+
+  // Notifications
+  notifications Notification[]
+
+  @@index([phoneHash])
+  @@index([callschatId])
+  @@index([username])
+  @@index([isOnline])
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
+  BANNED
+}
+
+model UserPrivacySettings {
+  id                    String  @id @default(uuid())
+  userId                String  @unique
+  phoneVisibility       PrivacyLevel @default(HIDDEN)
+  profileVisibility     PrivacyLevel @default(CONTACTS)
+  lastSeenVisibility    PrivacyLevel @default(CONTACTS)
+  onlineStatusVisible   Boolean @default(false)
+  readReceipts          Boolean @default(true)
+  typingIndicator       Boolean @default(true)
+  screenshotProtection  Boolean @default(false)
+  allowDigitalKey       Boolean @default(true)
+  allowQRScan           Boolean @default(true)
+  profilePhoto          PrivacyLevel @default(CONTACTS)
+  about                 PrivacyLevel @default(CONTACTS)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_privacy_settings")
+}
+
+enum PrivacyLevel {
+  EVERYONE
+  CONTACTS
+  NONE
+  HIDDEN
+}
+
+model Device {
+  id          String   @id @default(uuid())
+  userId      String
+  deviceName  String
+  deviceType  DeviceType
+  deviceToken String?  // For push notifications
+  ipAddress   String?
+  lastActive  DateTime @default(now())
+  trusted     Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+enum DeviceType {
+  MOBILE_IOS
+  MOBILE_ANDROID
+  WEB
+  DESKTOP
+}
+
+// ============== Authentication ==============
+
+model OTP {
+  id         String   @id @default(uuid())
+  phoneHash  String
+  code       String
+  type       OTPType
+  expiresAt  DateTime
+  verified   Boolean  @default(false)
+  attempts   Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  @@index([phoneHash])
+  @@index([expiresAt])
+}
+
+enum OTPType {
+  REGISTRATION
+  LOGIN
+  PHONE_CHANGE
+  ACCOUNT_DELETE
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  userId       String
+  refreshToken String   @unique
+  deviceInfo   String?
+  ipAddress    String?
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+  @@index([refreshToken])
+}
+
+// ============== Contacts ==============
+
+model Contact {
+  id           String   @id @default(uuid())
+  userId       String
+  contactUserId String
+  nickname     String?
+  isFavorite   Boolean  @default(false)
+  isMuted      Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  user         User     @relation("UserContacts", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, contactUserId])
+  @@index([userId])
+  @@index([contactUserId])
+}
+
+model ContactRequest {
+  id         String            @id @default(uuid())
+  senderId   String
+  receiverId String
+  message    String?
+  status     ContactRequestStatus @default(PENDING)
+  expiresAt  DateTime @default(now()) + @db.Interval(days:7)
+  createdAt  DateTime @default(now())
+
+  sender     User @relation("SentContactRequests", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver   User @relation("ReceivedContactRequests", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@unique([senderId, receiverId])
+  @@index([senderId])
+  @@index([receiverId])
+  @@index([status])
+}
+
+enum ContactRequestStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  EXPIRED
+}
+
+model Block {
+  id        String   @id @default(uuid())
+  userId    String
+  blockedId String
+  reason    String?
+  createdAt DateTime @default(now())
+
+  user      User @relation("UserBlockedUsers", fields: [userId], references: [id], onDelete: Cascade)
+  blockedBy User @relation("UserBlockedBy", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, blockedId])
+  @@index([userId])
+  @@index([blockedId])
+}
+
+// ============== Chats & Messages ==============
+
+model Conversation {
+  id         String           @id @default(uuid())
+  type       ConversationType
+  title      String?
+  avatar     String?
+  createdBy  String
+  isMuted    Boolean          @default(false)
+  pinned     Boolean          @default(false)
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  members    ConversationMember[]
+  messages   Message[]
+  settings   ConversationSettings?
+
+  @@index([type])
+  @@index([createdBy])
+}
+
+enum ConversationType {
+  ONE_TO_ONE
+  GROUP
+  COMMUNITY
+  BROADCAST
+}
+
+model ConversationMember {
+  id             String   @id @default(uuid())
+  conversationId String
+  userId         String
+  role           MemberRole @default(MEMBER)
+  mutedUntil     DateTime?
+  joinedAt       DateTime @default(now())
+  leftAt         DateTime?
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user           User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([conversationId])
+  @@index([userId])
+}
+
+enum MemberRole {
+  OWNER
+  ADMIN
+  MODERATOR
+  MEMBER
+}
+
+model ConversationSettings {
+  id             String   @id @default(uuid())
+  conversationId String   @unique
+  encryptionEnabled Boolean @default(true)
+  messageRetention  Int    @default(0) // 0 = forever, in days
+  allowInvites   Boolean  @default(true)
+  sendReadReceipts Boolean @default(true)
+  showTyping     Boolean  @default(true)
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+}
+
+model Message {
+  id              String         @id @default(uuid())
+  conversationId  String
+  senderId        String
+  messageType     MessageType
+  encryptedContent String?
+  plainContent    String?
+  mediaUrl        String?
+  mediaType       MediaType?
+  mediaMetadata   Json?
+  replyToId       String?
+  forwardCount    Int            @default(0)
+  status          MessageStatus  @default(SENT)
+  expiresAt       DateTime?
+  deletedAt       DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender          User @relation("UserMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  reactions       MessageReaction[]
+
+  @@index([conversationId])
+  @@index([senderId])
+  @@index([createdAt])
+  @@index([status])
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  AUDIO
+  FILE
+  VOICE_NOTE
+  LOCATION
+  CONTACT
+  SYSTEM
+  POLL
+  STORY
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+  AUDIO
+  FILE
+  STICKER
+  GIF
+}
+
+enum MessageStatus {
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  DELETED
+}
+
+model MessageReaction {
+  id         String   @id @default(uuid())
+  messageId  String
+  userId     String
+  emoji      String
+  createdAt  DateTime @default(now())
+
+  message    Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([messageId])
+}
+
+// ============== Calls ==============
+
+model Call {
+  id          String      @id @default(uuid())
+  callerId    String
+  receiverId  String
+  callType    CallType
+  status      CallStatus  @default(INITIATED)
+  isEncrypted Boolean     @default(true)
+  startedAt   DateTime?
+  endedAt     DateTime?
+  duration    Int?        // in seconds
+  qualityScore Int?       // 1-5
+  recordingUrl String?    // For recorded calls (with consent)
+
+  caller      User @relation("InitiatedCalls", fields: [callerId], references: [id], onDelete: Cascade)
+  receiver    User @relation("ReceivedCalls", fields: [receiverId], references: [id], onDelete: Cascade)
+  participants CallParticipant[]
+
+  @@index([callerId])
+  @@index([receiverId])
+  @@index([status])
+  @@index([startedAt])
+}
+
+enum CallType {
+  VOICE
+  VIDEO
+  GROUP_VOICE
+  GROUP_VIDEO
+}
+
+enum CallStatus {
+  INITIATED
+  RINGING
+  CONNECTED
+  ENDED
+  MISSED
+  DECLINED
+  FAILED
+}
+
+model CallParticipant {
+  id          String   @id @default(uuid())
+  callId      String
+  userId      String
+  joinedAt    DateTime @default(now())
+  leftAt      DateTime?
+  duration    Int?     // in seconds
+
+  call        Call @relation(fields: [callId], references: [id], onDelete: Cascade)
+  user        User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([callId])
+  @@index([userId])
+}
+
+// ============== Communities ==============
+
+model Community {
+  id          String   @id @default(uuid())
+  name        String
+  username    String?  @unique
+  description String?
+  avatar      String?
+  coverImage  String?
+  category    CommunityCategory?
+  tags        String[]
+  privacyType PrivacyType @default(PRIVATE)
+  ownerId     String
+  memberCount Int      @default(1)
+  isVerified  Boolean  @default(false)
+  isNSFW      Boolean  @default(false)
+  rules       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner       User @relation("CommunityOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members     CommunityMember[]
+  posts       CommunityPost[]
+
+  @@index([username])
+  @@index([privacyType])
+  @@index([category])
+  @@index([ownerId])
+}
+
+enum CommunityCategory {
+  GENERAL
+  TECHNOLOGY
+  GAMING
+  SPORTS
+  MUSIC
+  MOVIES
+  EDUCATION
+  BUSINESS
+  HEALTH
+  TRAVEL
+  FOOD
+  ART
+  POLITICS
+  RELIGION
+  DATING
+  OTHER
+}
+
+enum PrivacyType {
+  PUBLIC
+  PRIVATE
+  LOCKED // Request to join required
+}
+
+model CommunityMember {
+  id          String          @id @default(uuid())
+  communityId String
+  userId      String
+  role        CommunityRole   @default(MEMBER)
+  joinedAt    DateTime        @default(now())
+  leftAt      DateTime?
+  mutedUntil  DateTime?
+
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  user        User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([communityId, userId])
+  @@index([communityId])
+  @@index([userId])
+}
+
+enum CommunityRole {
+  OWNER
+  ADMIN
+  MODERATOR
+  MEMBER
+}
+
+model CommunityPost {
+  id          String   @id @default(uuid())
+  communityId String
+  authorId    String
+  content     String
+  mediaUrls   String[]
+  likes       Int      @default(0)
+  comments    Int      @default(0)
+  pinned      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@index([communityId])
+  @@index([authorId])
+  @@index([createdAt])
+}
+
+// ============== Notifications ==============
+
+model Notification {
+  id         String           @id @default(uuid())
+  userId     String
+  type       NotificationType
+  title      String
+  message    String
+  data       Json?
+  read       Boolean          @default(false)
+  readAt     DateTime?
+  createdAt  DateTime         @default(now())
+
+  user       User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([read])
+  @@index([createdAt])
+}
+
+enum NotificationType {
+  MESSAGE
+  CALL
+  CONTACT_REQUEST
+  COMMUNITY_INVITE
+  COMMUNITY_POST
+  MENTION
+  SYSTEM
+  MODERATION
+  VERIFICATION
+}
+
+// ============== Moderation ==============
+
+model Report {
+  id          String      @id @default(uuid())
+  reporterId  String
+  targetType  ReportTargetType
+  targetId    String
+  reason      ReportReason
+  description String?
+  status      ReportStatus @default(PENDING)
+  priority    ReportPriority @default(MEDIUM)
+  evidenceUrls String[]
+  reviewedBy  String?
+  reviewedAt  DateTime?
+  actionTaken String?
+  createdAt   DateTime @default(now())
+
+  reporter    User @relation("UserReports", fields: [reporterId], references: [id], onDelete: Cascade)
+  reportedUser User? @relation("ReportedUser", fields: [targetId], references: [id])
+
+  @@index([reporterId])
+  @@index([targetType, targetId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+enum ReportTargetType {
+  USER
+  MESSAGE
+  COMMUNITY
+  POST
+  CALL
+}
+
+enum ReportReason {
+  HARASSMENT
+  SPAM
+  INAPPROPRIATE_CONTENT
+  HATE_SPEECH
+  THREATS
+  PRIVACY_VIOLATION
+  IMPERSONATION
+  FAKE_ACCOUNT
+  SCAM
+  VIOLENCE
+  OTHER
+}
+
+enum ReportStatus {
+  PENDING
+  IN_REVIEW
+  RESOLVED
+  DISMISSED
+  ACTION_TAKEN
+}
+
+enum ReportPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model ModerationAction {
+  id          String   @id @default(uuid())
+  userId      String
+  actionType  ModerationActionType
+  reason      String?
+  duration    Int?     // in days, null = permanent
+  until       DateTime?
+  takenBy     String
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  user        User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([actionType])
+  @@index([createdAt])
+}
+
+enum ModerationActionType {
+  WARNING
+  MUTE
+  SUSPEND
+  BAN
+  CONTENT_REMOVAL
+  PROFILE_RESTRICTION
+}
+
+// ============== Wallet ==============
+
+model Wallet {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  balance         Decimal  @default(0) @db.Decimal(10, 2)
+  currency        String   @default("USD")
+  totalEarned     Decimal  @default(0) @db.Decimal(10, 2)
+  totalSpent      Decimal  @default(0) @db.Decimal(10, 2)
+  isVerified      Boolean  @default(false)
+  verificationLevel VerificationLevel @default(NONE)
+
+  user            User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions    WalletTransaction[]
+
+  @@map("wallets")
+}
+
+enum VerificationLevel {
+  NONE
+  BASIC
+  INTERMEDIATE
+  ADVANCED
+}
+
+model WalletTransaction {
+  id          String   @id @default(uuid())
+  walletId    String
+  type        TransactionType
+  amount      Decimal  @db.Decimal(10, 2)
+  description String?
+  metadata    Json?
+  status      TransactionStatus @default(COMPLETED)
+  createdAt   DateTime @default(now())
+
+  wallet      Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId])
+  @@index([type])
+  @@index([createdAt])
+}
+
+enum TransactionType {
+  CREDIT
+  DEBIT
+  REFUND
+  BONUS
+  SUBSCRIPTION
+  PURCHASE
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  CANCELLED
+  REFUNDED
+}
+
+// ============== AI Assistant (Optional) ==============
+
+model AIConversation {
+  id          String   @id @default(uuid())
+  userId      String
+  title       String?
+  model       String   @default("gpt-3.5-turbo")
+  context     Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model AIMessage {
+  id              String   @id @default(uuid())
+  conversationId  String
+  role            AIRole
+  content         String
+  tokens          Int?
+  createdAt       DateTime @default(now())
+
+  @@index([conversationId])
+  @@index([createdAt])
+}
+
+enum AIRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
